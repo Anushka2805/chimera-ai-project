@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Project Chimera - Live Dashboard</title>
+    
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'brand-blue': '#00bfff', 'brand-red': '#ff4d4d', 'brand-warn': '#f39c12',
+                        'brand-gray': '#a0c0E0', 'brand-border': '#1a3a6a', 'brand-bg': '#0a192f',
+                    },
+                    boxShadow: {
+                        'blue-glow': '0 0 8px #00bfff, 0 0 15px #00bfff', 'blue-glow-sm': '0 0 8px #00bfff',
+                        'blue-glow-after': '0 0 10px #00bfff, 0 0 5px #00bfff', 'red-glow': '0 0 10px #ff4d4d',
+                        'gauge-glow': '0 0 15px #ff4d4d',
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        /* Map ko poori height dene ke liye */
+        #map {
+            height: 100%;
+            width: 100%;
+            border-radius: 0.375rem; /* rounded-md */
+            border: 1px solid rgba(0, 191, 255, 0.4);
+            box-shadow: 0 0 15px rgba(0, 191, 255, 0.2), inset 0 0 15px rgba(0, 191, 255, 0.1);
+        }
+
+        .custom-marker {
+            width: 20px; height: 20px; border-radius: 50%;
+            border: 2px solid #fff; box-shadow: 0 0 5px rgba(0,0,0,0.5);
+        }
+        .red-marker { background-color: #D10000; }
+        .yellow-marker { background-color: #FFFF00; }
+
+        @keyframes pulseYellow {
+            0% { box-shadow: 0 0 0 0 rgba(255, 255, 0, 0.7); }
+            70% { box-shadow: 0 0 0 20px rgba(255, 255, 0, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(255, 255, 0, 0); }
+        }
+        @keyframes pulseRed {
+            0% { box-shadow: 0 0 0 0 rgba(255, 0, 0, 0.7); }
+            70% { box-shadow: 0 0 0 20px rgba(255, 0, 0, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(255, 0, 0, 0); }
+        }
+        .yellow-marker.blinking { animation: pulseYellow 2s infinite; }
+        .red-marker.blinking { animation: pulseRed 2s infinite; }
+        
+        /* Action plan text formatting */
+        #action-plan-text {
+            white-space: pre-wrap; 
+            font-family: inherit;
+            font-size: 0.95em;
+            color: #a0c0E0; /* brand-gray */
+        }
+        
+        /* Sidebar containers ke liye scrollability */
+        .sidebar-container { /* Maine yeh class add kiya hai */
+            display: flex;
+            flex-direction: column;
+            gap: 2rem; /* my-9 ko gap-2rem mein convert kiya */
+            height: calc(100vh - 6rem); /* LG breakpoint par full height */
+            overflow-y: auto; /* Scrollable banaya */
+            padding-right: 0.5rem; /* Scrollbar ke liye space */
+        }
+
+        /* Customize Scrollbar for better look (Optional) */
+        .sidebar-container::-webkit-scrollbar {
+            width: 8px;
+        }
+        .sidebar-container::-webkit-scrollbar-track {
+            background: #1a3a6a; /* brand-border */
+            border-radius: 10px;
+        }
+        .sidebar-container::-webkit-scrollbar-thumb {
+            background: #00bfff; /* brand-blue */
+            border-radius: 10px;
+        }
+        .sidebar-container::-webkit-scrollbar-thumb:hover {
+            background: #0099e6;
+        }
+
+    </style>
+</head>
+
+<body class="bg-brand-bg text-white font-sans">
+    
+    <div class="relative min-h-screen w-full bg-brand-bg">
+
+        <nav class="absolute top-0 left-0 w-full py-3 z-20">
+            <ul class="list-none mt-5 mx-12 text-xl flex justify-center lg:justify-end">
+                <li class="mx-5 lg:mx-5">
+                    <a href="#" class="relative text-xl font-bold text-white transition-colors duration-300 ease-in-out hover:text-gray-300 hover:scale-110 after:content-[''] after:absolute after:left-0 after:-bottom-1 after:h-0.5 after:w-0 after:bg-brand-blue after:shadow-blue-glow-after after:transition-all after:duration-300 after:ease-in-out hover:after:w-full">Home</a>
+                </li>
+                <li class="mx-3 lg:mx-5">
+                    <a href="Dashboard.html" class="relative text-xl font-bold text-white transition-colors duration-300 ease-in-out hover:text-gray-300 hover:scale-110 after:content-[''] after:absolute after:left-0 after:-bottom-1 after:h-0.5 after:w-0 after:bg-brand-blue after:shadow-blue-glow-after after:transition-all after:duration-300 after:ease-in-out hover:after:w-full text-shadow-brand-blue-text">Dashboard</a>
+                </li>
+            </ul>
+        </nav>
+
+        <div class="grid grid-cols-1 lg:grid-cols-[18rem,1fr,18rem] gap-4 p-4 pt-20 h-auto lg:h-screen">
+        
+            <aside class="sidebar-left my-9 lg:my-0"> <div class="sidebar-container"> <div class="widget bg-brand-bg/70 backdrop-blur-sm border border-brand-border rounded-md p-4 shadow-lg shadow-black/20 text-left" style="border: 1px solid rgba(0, 191, 255, 0.4); box-shadow: 0 0 15px rgba(0, 191, 255, 0.2), inset 0 0 15px rgba(0, 191, 255, 0.1);">
+                        <h3 class="text-brand-blue text-sm font-bold uppercase mt-0 mb-3 pb-2 border-b border-brand-border">CONTROL PANEL</h3>
+                        
+                        <button id="run-sim" class="w-full p-3 font-bold text-white bg-brand-red rounded-md shadow-red-glow transition-all duration-300 hover:bg-red-500">
+                            Run AI Prediction
+                        </button>
+                        
+                        <div id="message-box" class="text-brand-warn text-sm text-center mt-3">Ready to simulate.</div>
+                    </div>
+
+                    <div class="widget bg-brand-bg/70 backdrop-blur-sm border border-brand-border rounded-md p-4 shadow-lg shadow-black/20 text-left" style="border: 1px solid rgba(0, 191, 255, 0.4); box-shadow: 0 0 15px rgba(0, 191, 255, 0.2), inset 0 0 15px rgba(0, 191, 255, 0.1);">
+                        <h3 class="text-brand-blue text-sm font-bold uppercase mt-0 mb-3 pb-2 border-b border-brand-border">AI-Generated Action Plan</h3>
+                        
+                        <pre id="action-plan-text">Run prediction to generate plan...</pre>
+                    </div>
+
+                    <div class="widget bg-brand-bg/70 backdrop-blur-sm border border-brand-border rounded-md p-4 shadow-lg shadow-black/20 text-left" style="border: 1px solid rgba(0, 191, 255, 0.4); box-shadow: 0 0 15px rgba(0, 191, 255, 0.2), inset 0 0 15px rgba(0, 191, 255, 0.1);">
+                        <h3 class="text-brand-blue text-sm font-bold uppercase mt-0 mb-3 pb-2 border-b border-brand-border">AFFECTED ASSETS</h3>
+                        <ul id="affected-assets-list" class="list-disc list-inside text-sm text-brand-gray space-y-1">
+                            <li>No assets affected yet. Run prediction.</li>
+                        </ul>
+                    </div>
+                </div> </aside>
+
+            <main class="main-content flex flex-col gap-4 mb-24 shadow: shadow-md">
+                <div id="map"></div>
+            </main>
+
+            <aside class="sidebar-right mt-16 lg:mt-0"> <div class="sidebar-container"> <div class="widget bg-brand-bg/70 backdrop-blur-sm rounded-md p-3 shadow-lg shadow-black/20 text-left" style="border: 1px solid rgba(0, 191, 255, 0.4); box-shadow: 0 0 15px rgba(5, 161, 212, 0.2), inset 0 0 15px rgba(0, 191, 255, 0.1);">
+                        <h3 class="text-brand-blue text-xs font-bold uppercase mt-0 mb-2 pb-2 border-b border-brand-border">EVACUATION PRIORITY</h3>
+                        <div class="gauge-placeholder flex justify-center items-center h-32">
+                            <div class="gauge-inner w-24 h-24 rounded-full relative shadow-gauge-glow flex flex-col justify-center items-center bg-[conic-gradient(#ff4d4d_0deg_290deg,#1a3a6a_290deg_360deg)] before:content-[''] before:absolute before:w-20 before:h-20 before:bg-brand-bg before:rounded-full">
+                                <div class="gauge-text-high text-brand-red text-xl font-bold z-10">HIGH</div>
+                                <div class="gauge-label text-gray-200 text-xs uppercase z-10">RISK</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="widget bg-brand-bg/70 backdrop-blur-sm rounded-md p-3 shadow-lg shadow-black/20 text-left" style="border: 1px solid rgba(0, 191, 255, 0.4); box-shadow: 0 0 15px rgba(0, 191, 255, 0.2), inset 0 0 15px rgba(0, 191, 255, 0.1);">
+                        <h3 class="text-brand-blue text-xs font-bold uppercase mt-0 mb-2 pb-2 border-b border-brand-border">LEGEND</h3>
+                        <ul class="legend-list list-none p-0 m-0 space-y-1.5">
+                            <li class="flex items-center text-xs">
+                                <span class="w-3 h-3 border border-gray-200 mr-2" style="background-color: #ff4d4d;"></span>
+                                SUBSTATION (Direct Risk)
+                            </li>
+                            <li class="flex items-center text-xs">
+                                <span class="w-3 h-3 border border-gray-200 mr-2" style="background-color: #FFFF00;"></span> HOSPITAL (Cascade Risk)
+                            </li>
+                            <li class="flex items-center text-xs">
+                                <span class="w-3 h-3 border border-gray-200 mr-2" style="background-color: #f39c12;"></span> MODERATE: STAY ALERT
+                            </li>
+                        </ul>
+                    </div>
+
+                    <div class="widget bg-brand-bg/70 backdrop-blur-sm rounded-md p-3 shadow-lg shadow-black/20 text-left" style="border: 1px solid rgba(0, 191, 255, 0.4); box-shadow: 0 0 15px rgba(0, 191, 255, 0.2), inset 0 0 15px rgba(0, 191, 255, 0.1);">
+                        <h3 class="text-brand-blue text-xs font-bold uppercase mt-0 mb-2 pb-2 border-b border-brand-border">ADDITIONAL INFO</h3>
+                        <p class="text-xs text-brand-gray">This is an extra scrollable widget.</p>
+                        <p class="text-xs text-brand-gray">You can add more content here to test scrolling.</p>
+                        <p class="text-xs text-brand-gray">Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.</p>
+                        <p class="text-xs text-brand-gray">Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.</p>
+                    </div>
+
+                </div> </aside>
+        </div>
+    </div>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+
+    <script>
+        // --- 1. SETUP THE MAP ---
+        // Start zoomed out on the whole world
+        const map = L.map('map').setView([20, 0], 2); 
+
+        // Add the dark map tiles
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+            subdomains: 'abcd',
+            maxZoom: 20
+        }).addTo(map);
+
+        // --- 2. CINEMATIC INTRO ANIMATION ---
+        setTimeout(() => {
+            map.flyTo([20.5937, 78.9629], 5, { duration: 4 }); // Fly to India
+        }, 1000); 
+
+        setTimeout(() => {
+            map.flyTo([28.6139, 77.2090], 11, { duration: 3 }); // Fly to Delhi
+        }, 5500); 
+        // --- END OF ANIMATION ---
+
+
+        // --- 3. GET HTML ELEMENTS ---
+        let markersLayer = L.layerGroup().addTo(map);
+        const messageBox = document.getElementById('message-box');
+        const actionPlanText = document.getElementById('action-plan-text');
+        const affectedAssetsList = document.getElementById('affected-assets-list'); // Naya element
+        
+        // --- 4. HELPER FUNCTIONS ---
+        function clearMarkers() {
+            markersLayer.clearLayers();
+        }
+
+        function addMarker(lng, lat, cssClass, popupText = null) {
+            const customIcon = L.divIcon({
+                className: `custom-marker ${cssClass}`, 
+                iconSize: [20, 20]
+            });
+            const marker = L.marker([lat, lng], { icon: customIcon }).addTo(markersLayer);
+            if (popupText) {
+                marker.bindPopup(popupText);
+            }
+        }
+
+        // --- 5. MAIN API CALL ---
+        document.getElementById('run-sim').addEventListener('click', () => {
+            clearMarkers();
+            messageBox.innerText = "Running AI prediction...";
+            actionPlanText.innerText = "Generating plan..."; // Clear old plan
+            affectedAssetsList.innerHTML = '<li>Analyzing affected assets...</li>'; // Clear old assets
+
+            const disasterEvent = {
+                lat: 28.6139,
+                lng: 77.2090
+            };
+
+            // **IMPORTANT**: Ensure your 'app.py' (Flask) server is running!
+            // This URL points to your local Flask backend.
+            fetch('http://127.0.0.1:5000/api/predict-failure', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(disasterEvent)
+            })
+            .then(response => response.json())
+            .then(data => {
+                const failing_assets = JSON.parse(data.failing_assets);
+                const action_plan = data.action_plan;
+
+                messageBox.innerText = `Prediction Complete: ${failing_assets.length} assets at risk!`;
+
+                affectedAssetsList.innerHTML = ''; // Clear "Analyzing..." message
+                if (failing_assets.length === 0) {
+                    affectedAssetsList.innerHTML = '<li>No critical assets detected.</li>';
+                }
+
+                for (let asset of failing_assets) {
+                    let colorClass = '';
+                    let assetType = '';
+                    let riskText = '';
+
+                    if (asset.asset_type === 0) { // Hospital
+                        colorClass = 'yellow-marker blinking';
+                        assetType = 'Hospital';
+                        riskText = 'CASCADING FAILURE RISK';
+                    } else { // Substation
+                        colorClass = 'red-marker blinking';
+                        assetType = 'Substation';
+                        riskText = 'DIRECT FAILURE RISK';
+                    }
+
+                    const popup = `<h3>${asset.asset_name}</h3><p>Type: ${assetType}</p><p style="color:${colorClass.includes('red') ? 'red' : 'yellow'};"><b>${riskText}</b></p>`;
+                    addMarker(asset.longitude, asset.latitude, colorClass, popup);
+                    
+                    // Affected assets list mein add karna
+                    affectedAssetsList.innerHTML += `<li>${asset.asset_name} (${assetType}) - Lat: ${asset.latitude.toFixed(2)}, Lng: ${asset.longitude.toFixed(2)}</li>`;
+                }
+                
+                // Update the action plan text
+                actionPlanText.innerText = action_plan;
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                messageBox.innerText = "Error: Could not connect to backend.";
+                actionPlanText.innerText = "Failed to connect to AI server. Is app.py running?";
+                affectedAssetsList.innerHTML = '<li>Error loading assets.</li>';
+            });
+        });
+    </script>
+</body>
+</html>
