@@ -1,67 +1,155 @@
-import os, json, joblib
+import os
+import joblib
 import pandas as pd
+import json
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from haversine import haversine, Unit
 
-app = Flask(__name__, static_folder="frontend")
+
+# --- 1. SETUP & LOAD MODELS ---
+app = Flask(__name__, static_folder='frontend')
 CORS(app)
 
-# 🚫 Disable caching (IMPORTANT)
-@app.after_request
-def no_cache(res):
-    res.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-    res.headers["Pragma"] = "no-cache"
-    res.headers["Expires"] = "0"
-    return res
 
-# Load assets
+# Load the Scikit-learn (Random Forest) model and assets
 try:
-    model = joblib.load("chimera_model.pkl")
-    all_assets_df = pd.read_csv("master_assets.csv")
-    with open("model_columns.json") as f:
+    model = joblib.load('chimera_model.pkl')
+    all_assets_df = pd.read_csv('master_assets.csv')
+    with open('model_columns.json', 'r') as f:
         MODEL_COLUMNS = json.load(f)
-    print("✅ Model & data loaded")
-except:
+    print("✅ Scikit-learn model and asset database loaded.")
+except FileNotFoundError:
+    print("❌ ERROR: Missing model files. Did you download all 3 files from Colab?")
     model = None
     all_assets_df = pd.DataFrame()
     MODEL_COLUMNS = []
 
-def action_plan(direct, cascade):
-    return f"""
-AI Simulation Complete.
-Total assets at risk: {len(direct)+len(cascade)}
 
-• PRIORITY 1: Secure substations
-• PRIORITY 2: Protect hospitals
-• PRIORITY 3: Reroute traffic
+# --- 2. DUMMY ACTION PLAN ---
+def get_dummy_action_plan(direct_failures, cascade_failures, clicked_point=None, radius_km=None):
+    origin_text = ""
+    if clicked_point:
+        origin_text = f" (origin: {clicked_point[0]:.4f}, {clicked_point[1]:.4f})"
+    radius_text = f" radius={radius_km:.1f} km" if radius_km else ""
+    plan = f"""
+AI Simulation Complete{origin_text}{radius_text}. {len(direct_failures) + len(cascade_failures)} assets at risk.
+
+• PRIORITY 1: Dispatch emergency generators and mobile units to all {len(cascade_failures)} predicted hospital failures.
+• PRIORITY 2: Secure the {len(direct_failures)} failing substations to prevent further damage.
+• PRIORITY 3: Reroute all non-emergency traffic away from affected zones.
 """
+    return plan
 
-@app.route("/api/predict-failure", methods=["POST"])
-def predict():
-    data = request.get_json() or {}
-    lat, lng = data.get("lat"), data.get("lng")
 
-    failing = pd.DataFrame()
-    if model is not None:
-        preds = model.predict(all_assets_df[MODEL_COLUMNS])
-        failing = all_assets_df[preds == 1]
+# --- 3. PREDICTION API ---
+@app.route("/api/predict-failure", methods=['POST'])
+def predict_failure():
+    try:
+        req = request.get_json(force=True) or {}
+    except Exception:
+        req = {}
 
-    direct = failing[failing["asset_type"] == 1]
-    cascade = failing[failing["asset_type"] == 0]
+    clicked_lat = req.get('lat', None)
+    clicked_lng = req.get('lng', None)
+    radius_km = float(req.get('radius', 3.0)) if req.get('radius') is not None else 3.0
+    clicked_point = (clicked_lat, clicked_lng) if clicked_lat is not None and clicked_lng is not None else None
+
+    if model is None and all_assets_df.empty:
+        return jsonify({"error": "Model or assets not loaded. Check server logs."}), 500
+
+    # PART A: Model prediction
+    if model is not None and MODEL_COLUMNS:
+        try:
+            assets_to_predict_df = all_assets_df[MODEL_COLUMNS]
+            predictions = model.predict(assets_to_predict_df)
+            all_failing_assets_df = all_assets_df[predictions == 1].copy()
+        except Exception as e:
+            print("Model prediction error:", e)
+            all_failing_assets_df = pd.DataFrame()
+    else:
+        all_failing_assets_df = pd.DataFrame()
+
+    # PART A.2: Force failures near clicked point
+    if clicked_point:
+        substations_df = all_assets_df[all_assets_df['asset_type'] == 1].copy()
+        forced_idxs = []
+        for idx, row in substations_df.iterrows():
+            try:
+                dist = haversine(
+                    (clicked_lat, clicked_lng),
+                    (row['latitude'], row['longitude']),
+                    unit=Unit.KILOMETERS
+                )
+            except Exception:
+                continue
+            if dist <= radius_km:
+                forced_idxs.append(idx)
+
+        if forced_idxs:
+            forced_df = substations_df.loc[forced_idxs]
+            all_failing_assets_df = (
+                pd.concat([all_failing_assets_df, forced_df])
+                .drop_duplicates()
+                .reset_index(drop=True)
+            )
+
+    # Direct failures
+    direct_failures = all_failing_assets_df[
+        all_failing_assets_df['asset_type'] == 1
+    ].copy()
+
+    # Cascading hospital failures
+    all_hospitals = all_assets_df[all_assets_df['asset_type'] == 0].copy()
+    failing_substation_coords = [
+        (row['latitude'], row['longitude']) for _, row in direct_failures.iterrows()
+    ]
+
+    cascade_failures_list = []
+    if failing_substation_coords:
+        for _, hospital in all_hospitals.iterrows():
+            hospital_coord = (hospital['latitude'], hospital['longitude'])
+            min_dist_km = min(
+                haversine(hospital_coord, sub_coord, unit=Unit.KILOMETERS)
+                for sub_coord in failing_substation_coords
+            )
+            if min_dist_km <= max(10.0, radius_km * 3.0):
+                cascade_failures_list.append(hospital)
+
+    cascade_failures = pd.DataFrame(cascade_failures_list)
+
+    action_plan_text = get_dummy_action_plan(
+        direct_failures, cascade_failures, clicked_point, radius_km
+    )
+
+    all_failing_for_frontend = (
+        pd.concat([direct_failures, cascade_failures])
+        .drop_duplicates()
+        .reset_index(drop=True)
+    )
 
     return jsonify({
-        "failing_assets": pd.concat([direct,cascade]).to_json(orient="records"),
-        "action_plan": action_plan(direct, cascade)
+        "failing_assets": all_failing_for_frontend.to_json(orient="records"),
+        "action_plan": action_plan_text
     })
 
+
+# Serve dashboard
 @app.route("/")
-def home():
+def serve_root():
     return send_from_directory("frontend", "Dashboard.html")
 
+
+@app.route("/dashboard")
+def serve_dashboard():
+    return send_from_directory("frontend", "Dashboard.html")
+
+
+# ✅ ONLY THIS PART UPDATED FOR PRODUCTION
 if __name__ == "__main__":
+    print("🚀 Starting Flask server (production-ready)...")
     app.run(
         host="0.0.0.0",
-        port=int(os.environ.get("PORT",5000)),
+        port=int(os.environ.get("PORT", 5000)),
         debug=False
     )
